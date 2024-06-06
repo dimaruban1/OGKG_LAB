@@ -8,6 +8,8 @@ using OxyPlot.Series;
 using OxyPlot.WindowsForms;
 using System.Drawing;
 using System.Text;
+using KdTree;
+using KdTree.Math;
 
 namespace OGKG_LAB
 {
@@ -19,11 +21,18 @@ namespace OGKG_LAB
         private ScatterSeries voronoiPointSeries;
         private ScatterSeries resultPointSeries;
 
+        private List<Solver.Point> dataPoints;
+        private List<Solver.Point> dataPointsByX;
+        private List<Solver.Point> dataPointsByY;
+        private KdTree<double, int> kd_tree;
+
         private Solver.ConvexHull _convexHull;
 
 
         public MainForm(Solver.ConvexHull convexHull)
         {
+            kd_tree = new KdTree<double, int>(2, new DoubleMath());
+            
             InitializeComponent();
 
             plotModel = new PlotModel();
@@ -50,7 +59,7 @@ namespace OGKG_LAB
                 MarkerSize = 6,
                 MarkerStroke = OxyColors.Red
             };
-            convexHullLineSeries = new LineSeries { LineStyle = LineStyle.Solid, Color = OxyColors.Red };
+            convexHullLineSeries = new LineSeries { LineStyle = LineStyle.Solid, Color = OxyColors.Green };
 
             InitializePlot();
             _convexHull = convexHull;
@@ -73,16 +82,19 @@ namespace OGKG_LAB
                 Title = "Y Axis"
             };
 
-            var dataPoints = new[]
-{
-                new ScatterPoint(0, 4),
-                new ScatterPoint(1, 7),
-                new ScatterPoint(2, 2),
-                new ScatterPoint(3, 9),
-                new ScatterPoint(4, 5)
+            dataPoints = new List<Solver.Point>()
+            {
+                new Solver.Point(0, 4),
+                new Solver.Point(1, 7),
+                new Solver.Point(2, 2),
+                new Solver.Point(3, 9),
+                new Solver.Point(4, 5)
             };
-
-            pointSeries.Points.AddRange(dataPoints);
+            foreach (var point in dataPoints)
+            {
+                kd_tree.Add(new double[] { point.X, point.Y }, 0);
+            }
+            pointSeries.Points.AddRange(dataPoints.Select(p => new ScatterPoint(p.X, p.Y)));
 
 
             plotModel.Series.Add(pointSeries);
@@ -98,8 +110,11 @@ namespace OGKG_LAB
         }
         private void AddPoint(double x, double y)
         {
+
             pointSeries.Points.Add(new ScatterPoint(x, y));
+            dataPoints.Add(new Solver.Point(x, y));
             plotView1.InvalidatePlot(true);
+            kd_tree.Add(new double[] { x, y }, 0);
         }
         private void AddPointButton_click(object? sender, MouseEventArgs e)
         {
@@ -162,7 +177,7 @@ namespace OGKG_LAB
                     double x = random.NextDouble() * (xRightBound - xLeftBound) + xLeftBound;
                     double y = random.NextDouble() * (yRightBound - yLeftBound) + yLeftBound;
 
-                    pointSeries.Points.Add(new ScatterPoint(x, y));
+                    AddPoint(x, y);
                 }
 
                 plotView1.InvalidatePlot(true);
@@ -175,12 +190,22 @@ namespace OGKG_LAB
             plotModel.Annotations.Clear();
             convexHullLineSeries.Points.Clear();
             resultPointSeries.Points.Clear();
-            //plotModel.Series.Clear();
+            
+            plotModel.Series.Clear();
+
+            plotModel.Series.Add(pointSeries);
+            plotModel.Series.Add(convexHullLineSeries);
+            plotModel.Series.Add(voronoiPointSeries);
+            plotModel.Series.Add(resultPointSeries);
             plotView1.InvalidatePlot(true);
         }
 
         private void SolveButton_Click(object sender, EventArgs e)
         {
+            
+            dataPointsByX = dataPoints.OrderBy(p => p.X).ToList();
+            dataPointsByY = dataPoints.OrderBy(p => p.Y).ToList();
+
             GenerateConvexHullButton_Click(sender, e);
 
             var vertexPoints = pointSeries.Points.Select(point => new Vertex(point.X, point.Y)).ToList();
@@ -201,8 +226,8 @@ namespace OGKG_LAB
                 var point1 = new ScatterPoint(edge.Item1[0], edge.Item1[1]);
                 var point2 = new ScatterPoint(edge.Item2[0], edge.Item2[1]);
 
-                var intersections = Solver.ConvexHull.FindIntersection(convexHullLineSeries.Points.Select(p => new Solver.Point(p)).ToList(), 
-                    new Solver.Point(point1), 
+                var intersections = Solver.ConvexHull.FindIntersection(convexHullLineSeries.Points.Select(p => new Solver.Point(p)).ToList(),
+                    new Solver.Point(point1),
                     new Solver.Point(point2));
                 foreach (var p in intersections)
                 {
@@ -242,9 +267,10 @@ namespace OGKG_LAB
         public double ComputeRadius(ScatterPoint vertex)
         {
             double minDistance = double.MaxValue;
-            foreach (var point in pointSeries.Points)
+            var closestNodes = kd_tree.GetNearestNeighbours(new double[] { vertex.X, vertex.Y }, 3);
+            foreach (var node in closestNodes)
             {
-                double distance = Math.Sqrt(Math.Pow(vertex.X - point.X, 2) + Math.Pow(vertex.Y - point.Y, 2));
+                double distance = Math.Sqrt(Math.Pow(vertex.X - node.Point[0], 2) + Math.Pow(vertex.Y - node.Point[1], 2));
                 minDistance = Math.Min(minDistance, distance);
             }
 
